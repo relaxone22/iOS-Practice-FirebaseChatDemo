@@ -21,37 +21,38 @@
 */
 
 import UIKit
-import Firebase
-import JSQMessagesViewController
 
 class ChatViewController: JSQMessagesViewController {
-  
+
   // MARK: Properties
-  let rootRef = Firebase(url: "https://<your-firebase-app>.firebaseio.com/")
-  var messageRef: Firebase!
   var messages = [JSQMessage]()
+  var outgoingBubbleImageView: JSQMessagesBubbleImage!
+  var incomingBubbleImageView: JSQMessagesBubbleImage!
   
-  var userIsTypingRef: Firebase!
-  var usersTypingQuery: FQuery!
-  fileprivate var localTyping = false
+  let rootRef = FIRDatabase.database().reference(fromURL: "https://chatchat-bd7e3.firebaseio.com/messages/")
+  var messageRef:FIRDatabaseReference!
+  
+  
+  var userIsTypingRef:FIRDatabaseReference! //1
+  private var localTyping = false //2
   var isTyping: Bool {
-    get {
-      return localTyping
+    set{
+        //3
+        localTyping = newValue
+        userIsTypingRef.setValue(newValue)
     }
-    set {
-      localTyping = newValue
-      userIsTypingRef.setValue(newValue)
+    get{
+        return localTyping
     }
   }
   
-  var outgoingBubbleImageView: JSQMessagesBubbleImage!
-  var incomingBubbleImageView: JSQMessagesBubbleImage!
+  var userTypingQuery:FIRDatabaseQuery!
+  
   
   override func viewDidLoad() {
     super.viewDidLoad()
     setupBubbles()
-    messageRef = rootRef?.child(byAppendingPath: "messages")
-    
+    messageRef = rootRef.child("messages")
     // No avatars
     collectionView!.collectionViewLayout.incomingAvatarViewSize = CGSize.zero
     collectionView!.collectionViewLayout.outgoingAvatarViewSize = CGSize.zero
@@ -60,7 +61,7 @@ class ChatViewController: JSQMessagesViewController {
   override func viewDidAppear(_ animated: Bool) {
     super.viewDidAppear(animated)
     observeMessages()
-    observeTyping()
+    observeIsTyping()
   }
   
   override func viewDidDisappear(_ animated: Bool) {
@@ -102,42 +103,44 @@ class ChatViewController: JSQMessagesViewController {
     return nil
   }
   
-  fileprivate func observeMessages() {
-    // 1
-    let messagesQuery = messageRef.queryLimited(toLast: 25)
-    // 2
-    messagesQuery.observe(.childAdded) { (snapshot: FDataSnapshot!) in
-      // 3
-      let id = snapshot.value["senderId"] as! String
-      let text = snapshot.value["text"] as! String
-      
-      // 4
-      self.addMessage(id, text: text)
-      
-      // 5
-      self.finishReceivingMessage()
+    func observeMessages() {
+        //1
+        let messagesQuery = messageRef.queryLimited(toLast: 25)
+        //2
+        messagesQuery.observe(FIRDataEventType.childAdded, with: { [weak self] (snpaShot:FIRDataSnapshot) in
+            //3
+            guard let dict = snpaShot.value as? [String:AnyObject] else { return }
+            guard let id = dict["senderId"] as? String else { return }
+            guard let text = dict["text"] as? String else { return }
+            //4
+            self?.addMessage(id, text: text)
+            //5
+            self?.finishReceivingMessage()
+        })
+        
     }
-  }
   
-  fileprivate func observeTyping() {
-    let typingIndicatorRef = rootRef?.child(byAppendingPath: "typingIndicator")
-    userIsTypingRef = typingIndicatorRef?.child(byAppendingPath: senderId)
-    userIsTypingRef.onDisconnectRemoveValue()
-    usersTypingQuery = typingIndicatorRef?.queryOrderedByValue().queryEqual(toValue: true)
-    
-    usersTypingQuery.observe(.value) { (data: FDataSnapshot!) in
-      
-      // You're the only typing, don't show the indicator
-      if data.childrenCount == 1 && self.isTyping {
-        return
-      }
-      
-      // Are there others typing?
-      self.showTypingIndicator = data.childrenCount > 0
-      self.scrollToBottom(animated: true)
+    func observeIsTyping() {
+        let typingIndicatorRef = rootRef.child("typingIndicator")
+        userIsTypingRef = typingIndicatorRef.child(senderId)
+        userIsTypingRef.onDisconnectRemoveValue()
+        
+        //1
+        userTypingQuery = typingIndicatorRef.queryOrderedByValue().queryEqual(toValue: true)
+        //2
+        userTypingQuery.observeSingleEvent(of: .value, with: { [weak self] (snapShot:FIRDataSnapshot) in
+            if let weakself = self {
+                
+                //3 You're the only typing, don't show the indicator
+                if snapShot.childrenCount == 1 && weakself.isTyping { return }
+                
+                // 4 Are there others typing?
+                weakself.showTypingIndicator = snapShot.childrenCount > 1
+                weakself.scrollToBottom(animated: true)
+            }
+        })
+        
     }
-
-  }
   
   func addMessage(_ id: String, text: String) {
     let message = JSQMessage(senderId: id, displayName: "", text: text)
@@ -150,22 +153,18 @@ class ChatViewController: JSQMessagesViewController {
     isTyping = textView.text != ""
   }
   
-  override func didPressSend(_ button: UIButton!, withMessageText text: String!, senderId: String!, senderDisplayName: String!, date: Date!) {
-    
-    let itemRef = messageRef.childByAutoId() // 1
-    let messageItem = [ // 2
-      "text": text,
-      "senderId": senderId
-    ]
-    itemRef?.setValue(messageItem) // 3
-    
-    // 4
-    JSQSystemSoundPlayer.jsq_playMessageSentSound()
-    
-    // 5
-    finishSendingMessage()
-    isTyping = false
-  }
+    //发送消息
+    override func didPressSend(_ button: UIButton!, withMessageText text: String!, senderId: String!, senderDisplayName: String!, date: Date!) {
+        let itemRef = messageRef.childByAutoId()
+        let messageItem = [
+            "text":text,
+            "senderId":senderId
+        ]
+        itemRef.setValue(messageItem)
+        JSQSystemSoundPlayer.jsq_playMessageSentSound()
+        finishSendingMessage()
+        isTyping = false
+    }
   
   fileprivate func setupBubbles() {
     let bubbleImageFactory = JSQMessagesBubbleImageFactory()

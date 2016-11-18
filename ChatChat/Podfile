@@ -1,6 +1,8 @@
 platform :ios, "9.0"
 use_frameworks!
 target 'ChatChat' do
-  pod 'Firebase'
   pod 'JSQMessagesViewController'
+  pod 'Firebase/Database'
+  pod 'Firebase/Core'
+  pod 'Firebase/Auth'
 end
